@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+# useless - A CLI for useless facts animated with ttfx
+# https://github.com/visual-zimbabwe/useless
+
+set -euo pipefail
+
+VERSION="1.0.1"
+ENDPOINT="today"
+EFFECT="decrypt"
+LANG="en"
+RAW=0
+COPY=0
+HEADER=0
+
+show_help() {
+  cat <<'HELP_EOF'
+useless - Fetch and animate useless facts in your terminal
+
+USAGE:
+  useless [COMMAND] [OPTIONS]
+
+COMMANDS:
+  today              Fetch today's fact of the day (default)
+  random, -r         Fetch a random useless fact
+
+OPTIONS:
+  -e, --effect <name> Specify ttfx animation effect (default: decrypt)
+                      Common effects: decrypt, print, beams, matrix,
+                      colorshift, burn, pour, rain, waves, -R (random)
+  -l, --lang <code>   Language: 'en' (default) or 'de'
+  -c, --copy          Copy the fact to clipboard (wl-copy / xclip)
+  --header            Show section header above fact
+  --raw               Output plain text without ttfx animation
+  -v, --version       Show version
+  -h, --help          Show this help message
+
+EXAMPLES:
+  useless                     # Today's fact with decrypt effect
+  useless random              # Random fact
+  useless random -e matrix    # Random fact with Matrix rain effect
+  useless random -e -R        # Random fact with random ttfx animation
+  useless -c                  # Copy fact to clipboard
+  useless --raw               # Raw fact text for piping/scripts
+HELP_EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    today|-t|--today)
+      ENDPOINT="today"
+      shift
+      ;;
+    random|-r|--random)
+      ENDPOINT="random"
+      shift
+      ;;
+    -e|--effect)
+      if [[ $# -lt 2 ]]; then
+        echo "Error: --effect requires an effect name." >&2
+        exit 1
+      fi
+      EFFECT="$2"
+      shift 2
+      ;;
+    -l|--lang|--language)
+      if [[ $# -lt 2 ]]; then
+        echo "Error: --lang requires a language code ('en' or 'de')." >&2
+        exit 1
+      fi
+      LANG="$2"
+      shift 2
+      ;;
+    --header)
+      HEADER=1
+      shift
+      ;;
+    --raw)
+      RAW=1
+      shift
+      ;;
+    -c|--copy)
+      COPY=1
+      shift
+      ;;
+    -v|--version)
+      echo "useless v${VERSION}"
+      exit 0
+      ;;
+    -h|--help)
+      show_help
+      exit 0
+      ;;
+    *)
+      echo "Unknown argument: $1" >&2
+      echo "Run 'useless --help' for usage." >&2
+      exit 1
+      ;;
+  esac
+done
+
+# Fetch fact from the API
+API_URL="https://uselessfacts.jsph.pl/api/v2/facts/${ENDPOINT}?language=${LANG}"
+RESPONSE=$(curl -s -m 3 "$API_URL" || true)
+
+FACT=$(echo "$RESPONSE" | jq -r '.text // empty' 2>/dev/null)
+
+if [[ -z "$FACT" ]]; then
+  echo "Error: Could not retrieve fact. Please check your internet connection." >&2
+  exit 1
+fi
+
+# Clean up fact string (strip linebreaks and excessive whitespace)
+FACT=$(echo "$FACT" | tr '\r\n' ' ' | sed -e 's/  */ /g' -e 's/^ *//' -e 's/ *$//')
+
+# Copy to clipboard if requested
+if [[ $COPY -eq 1 ]]; then
+  if command -v wl-copy &>/dev/null; then
+    echo "$FACT" | wl-copy
+  elif command -v xclip &>/dev/null; then
+    echo "$FACT" | xclip -selection clipboard
+  fi
+fi
+
+# Pre-wrap words cleanly so words are not cut in half mid-word
+COLS=$(tput cols 2>/dev/null || echo 80)
+WRAP_WIDTH=$(( COLS > 80 ? 76 : COLS - 4 ))
+(( WRAP_WIDTH < 30 )) && WRAP_WIDTH=30
+
+WRAPPED_FACT=$(echo "$FACT" | fmt -s -w "$WRAP_WIDTH")
+
+if [[ $RAW -eq 1 ]]; then
+  echo "$FACT"
+  exit 0
+fi
+
+if [[ $HEADER -eq 1 ]]; then
+  echo ""
+  echo "Useless Fact (${ENDPOINT}):"
+fi
+
+if command -v ttfx &>/dev/null; then
+  if [[ "$EFFECT" == "-R" || "$EFFECT" == "random" ]]; then
+    echo "$WRAPPED_FACT" | ttfx -R
+  else
+    echo "$WRAPPED_FACT" | ttfx "$EFFECT"
+  fi
+else
+  echo ""
+  echo "$WRAPPED_FACT"
+  echo ""
+fi
+
+if [[ $COPY -eq 1 ]]; then
+  echo "Copied to clipboard."
+fi
